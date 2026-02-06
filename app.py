@@ -851,12 +851,27 @@ elif page == "Thinners Sales":
         axis=1
     )
 
-    with col1:
-        pick_label = st.selectbox("Raw material", materials_df["label"].tolist())
-        pick_row = materials_df[materials_df["label"] == pick_label].iloc[0]
-        pick_code = pick_row["material_code"]
-        pick_name = pick_row["material_name"]
-    with col2:
+  # Make sure materials exist
+if materials_df.empty:
+    st.warning("No raw materials available")
+    st.stop()
+
+# Use material_code (THIS EXISTS)
+material_options = materials_df["material_code"].tolist()
+
+pick_label = st.selectbox(
+    "Raw material",
+    material_options
+)
+
+# SAFE lookup (NO CRASH)
+filtered = materials_df[materials_df["material_code"] == pick_label]
+
+if filtered.empty:
+    st.warning("Please select a raw material")
+    st.stop()
+
+pick_row = filtered.iloc[0]    with col2:
         qty_issue = st.number_input("Qty per 1 unit (issue)", min_value=0.0, value=0.0, step=0.01)
     with col3:
         uom = st.selectbox("UOM", ["L", "kg", "g", "ml"])
