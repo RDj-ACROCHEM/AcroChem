@@ -4,3 +4,4 @@ pandas
 pyyaml
 bcrypt
 supabase==2.6.0
+openpyxl
