@@ -153,163 +153,142 @@ def _get_formula_lines(product_code: str):
             params=(product_code,)
         )
 
-if page == "Materials (RM Master)":
+import streamlit as st
+import pandas as pd
 
-    st.subheader("RM Master (Raw Materials)")
+# --------------------------------
+# INIT SESSION STATE
+# --------------------------------
+if "rm_df" not in st.session_state:
+    st.session_state.rm_df = pd.DataFrame(columns=[
+        "material_code",
+        "material_name",
+        "category",
+        "stock_uom",
+        "issue_uom",
+        "issue_to_stock_factor",
+        "std_wastage_pct",
+        "is_critical",
+        "active",
+        "notes"
+    ])
 
-    # =====================================================
-    # LOAD MATERIALS
-    # =====================================================
-    df = logic.get_all_materials_df()
+CATEGORY_OPTIONS = ["Resin", "Pigment", "Solvent", "Additive", "Packaging"]
 
-    # =====================================================
-    # SEARCH
-    # =====================================================
-    search = st.text_input("Search material name or code")
+# --------------------------------
+# PAGE TITLE
+# --------------------------------
+st.title("RM Master (Raw Materials)")
 
-    if search:
-        df = df[
-            df["material_name"].str.contains(search, case=False, na=False)
-            | df["material_code"].str.contains(search, case=False, na=False)
-        ]
+# --------------------------------
+# IMPORT FILE
+# --------------------------------
+st.subheader("Import Raw Materials (CSV / XLSX)")
 
-    st.dataframe(df, use_container_width=True)
+uploaded = st.file_uploader(
+    "Upload file",
+    type=["csv", "xlsx"]
+)
 
-    # =====================================================
-    # ADD / UPDATE MATERIAL
-    # =====================================================
-    st.divider()
-    st.subheader("Add / Update Material")
-
-    col1, col2, col3 = st.columns(3)
-
-    material_code = col1.text_input("Material Code")
-    material_name = col2.text_input("Material Description")
-    category = col3.selectbox(
-        "Category",
-        ["Resin", "Pigment", "Solvent", "Additive", "Packaging", "Other"]
-    )
-
-    if st.button("Save Material", type="primary"):
-        if not material_code or not material_name:
-            st.error("Material code and description are required.")
+if uploaded:
+    try:
+        if uploaded.name.endswith(".csv"):
+            df = pd.read_csv(uploaded)
         else:
-            logic.upsert_material({
-                "material_code": material_code.strip(),
-                "material_name": material_name.strip(),
-                "category": category,
+            df = pd.read_excel(uploaded)
+
+        # Normalise columns
+        df.columns = df.columns.str.strip()
+
+        if "material_code" not in df.columns or "material_name" not in df.columns:
+            st.error("File must contain material_code and material_name")
+        else:
+            # Add missing columns
+            defaults = {
+                "category": "",
                 "stock_uom": "kg",
                 "issue_uom": "kg",
-                "issue_to_stock_factor": 1.0,
-                "std_wastage_pct": 0.0,
+                "issue_to_stock_factor": 1,
+                "std_wastage_pct": 0,
                 "is_critical": 0,
                 "active": 1,
-                "notes": ""
-            })
-            st.success("Material saved.")
+                "notes": "imported"
+            }
 
-    # =====================================================
-    # DELETE MATERIAL
-    # =====================================================
-    st.divider()
-    st.subheader("Delete Material (PERMANENT)")
+            for col, default in defaults.items():
+                if col not in df.columns:
+                    df[col] = default
 
-    delete_map = {
-        f"{row['material_code']} — {row['material_name']}": row["material_code"]
-        for _, row in df.iterrows()
-    }
+            df["category"] = ""  # IMPORTANT: blank on import
 
-    if delete_map:
-        delete_choice = st.selectbox(
-            "Select material to delete",
-            list(delete_map.keys())
-        )
+            st.write("Preview")
+            st.dataframe(df, use_container_width=True)
 
-        if st.button("DELETE MATERIAL", type="primary"):
-            logic.delete_material(delete_map[delete_choice])
-            st.success("Material deleted. Refresh page.")
+            if st.button("Import into RM Master"):
+                st.session_state.rm_df = pd.concat(
+                    [st.session_state.rm_df, df],
+                    ignore_index=True
+                )
+                st.success("Imported successfully")
+                st.rerun()
 
-    else:
-        st.info("No materials available.")
+    except Exception as e:
+        st.error(str(e))
 
-    # =====================================================
-    # IMPORT FROM EXCEL / CSV
-    # =====================================================
-    st.divider()
-    st.subheader("Import Raw Materials (Excel or CSV)")
+# --------------------------------
+# SEARCH
+# --------------------------------
+st.subheader("Raw Materials Table")
 
-    uploaded = st.file_uploader(
-        "Upload Excel or CSV file",
-        type=["xlsx", "csv"],
-        key="rm_master_import"
-    )
+search = st.text_input("Search material name or code")
 
-    if uploaded is not None:
+view_df = st.session_state.rm_df.copy()
 
-        # -------- safe reader --------
-        try:
-            if uploaded.name.lower().endswith(".csv"):
-                tmp = pd.read_csv(uploaded)
-            else:
-                try:
-                    tmp = pd.read_excel(uploaded, engine="openpyxl")
-                except:
-                    st.error("This Excel file is not a true XLSX file. Export as CSV instead.")
-                    st.stop()
-        except Exception as e:
-            st.error(f"File could not be read: {e}")
-            st.stop()
+if search:
+    view_df = view_df[
+        view_df["material_code"].str.contains(search, case=False, na=False) |
+        view_df["material_name"].str.contains(search, case=False, na=False)
+    ]
 
-        st.success("File loaded successfully")
+# --------------------------------
+# EDITABLE TABLE (CATEGORY AFTER IMPORT)
+# --------------------------------
+edited_df = st.data_editor(
+    view_df,
+    use_container_width=True,
+    column_config={
+        "category": st.column_config.SelectboxColumn(
+            "category",
+            options=CATEGORY_OPTIONS
+        ),
+        "active": st.column_config.CheckboxColumn("active"),
+        "is_critical": st.column_config.CheckboxColumn("is_critical")
+    },
+    disabled=["material_code"],
+    key="rm_editor"
+)
 
-        st.write("Detected columns:")
-        st.write(list(tmp.columns))
+# --------------------------------
+# SAVE CHANGES
+# --------------------------------
+if st.button("Save changes"):
+    st.session_state.rm_df.update(edited_df)
+    st.success("Changes saved")
 
-        # -------- column selection --------
-        code_col = st.selectbox("Select CODE column", tmp.columns)
-        desc_col = st.selectbox("Select DESCRIPTION column", tmp.columns)
+# --------------------------------
+# DELETE
+# --------------------------------
+to_delete = st.multiselect(
+    "Delete materials",
+    options=st.session_state.rm_df["material_code"].tolist()
+)
 
-        preview = tmp[[code_col, desc_col]].dropna().head(30)
-        st.dataframe(preview, use_container_width=True)
-
-        st.subheader("Assign category per material")
-
-        categories = ["Resin", "Pigment", "Solvent", "Additive", "Packaging", "Other"]
-
-        import_rows = []
-
-        for i, row in tmp.iterrows():
-            code = str(row.get(code_col, "")).strip()
-            desc = str(row.get(desc_col, "")).strip()
-
-            if not code or code.lower() == "nan":
-                continue
-
-            cat = st.selectbox(
-                f"{code} — {desc}",
-                categories,
-                key=f"cat_{i}"
-            )
-
-            import_rows.append((code, desc, cat))
-
-        if st.button("IMPORT INTO RM MASTER"):
-            for code, desc, cat in import_rows:
-                logic.upsert_material({
-                    "material_code": code,
-                    "material_name": desc,
-                    "category": cat,
-                    "stock_uom": "kg",
-                    "issue_uom": "kg",
-                    "issue_to_stock_factor": 1.0,
-                    "std_wastage_pct": 0.0,
-                    "is_critical": 0,
-                    "active": 1,
-                    "notes": "Imported from Excel"
-                })
-
-            st.success("All raw materials imported successfully.")
-
+if st.button("Delete selected"):
+    st.session_state.rm_df = st.session_state.rm_df[
+        ~st.session_state.rm_df["material_code"].isin(to_delete)
+    ]
+    st.success("Deleted")
+    st.rerun()
 # ============================
 # PRODUCTS
 # ============================
