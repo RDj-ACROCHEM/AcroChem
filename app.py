@@ -851,18 +851,7 @@ elif page == "Thinners Sales":
         axis=1
     )
 
-  # Make sure materials exist
-if materials_df.empty:
-    st.warning("No raw materials available")
-    st.stop()
-
-# Use material_code (THIS EXISTS)
-material_options = materials_df["material_code"].tolist()
-
-pick_label = st.selectbox(
-    "Raw material",
-    material_options
-)
+ 
 
 # SAFE lookup (NO CRASH)
 filtered = materials_df[materials_df["material_code"] == pick_label]
