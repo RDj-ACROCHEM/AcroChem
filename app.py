@@ -152,9 +152,7 @@ def _get_formula_lines(product_code: str):
             conn,
             params=(product_code,)
         )
-
-import streamlit as st
-import pandas as pd
+if page == "Materials (RM Master)"
 
 # --------------------------------
 # INIT SESSION STATE
