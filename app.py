@@ -152,142 +152,161 @@ def _get_formula_lines(product_code: str):
             conn,
             params=(product_code,)
         )
-if page == "Materials (RM Master)"
 
-# --------------------------------
-# INIT SESSION STATE
-# --------------------------------
-if "rm_df" not in st.session_state:
-    st.session_state.rm_df = pd.DataFrame(columns=[
-        "material_code",
-        "material_name",
-        "category",
-        "stock_uom",
-        "issue_uom",
-        "issue_to_stock_factor",
-        "std_wastage_pct",
-        "is_critical",
-        "active",
-        "notes"
-    ])
+# =================================================
+# RM MASTER PAGE
+# =================================================
+if page == "Materials (RM Master)":
 
-CATEGORY_OPTIONS = ["Resin", "Pigment", "Solvent", "Additive", "Packaging"]
-
-# --------------------------------
-# PAGE TITLE
-# --------------------------------
-st.title("RM Master (Raw Materials)")
-
-# --------------------------------
-# IMPORT FILE
-# --------------------------------
-st.subheader("Import Raw Materials (CSV / XLSX)")
-
-uploaded = st.file_uploader(
-    "Upload file",
-    type=["csv", "xlsx"]
-)
-
-if uploaded:
-    try:
-        if uploaded.name.endswith(".csv"):
-            df = pd.read_csv(uploaded)
-        else:
-            df = pd.read_excel(uploaded)
-
-        # Normalise columns
-        df.columns = df.columns.str.strip()
-
-        if "material_code" not in df.columns or "material_name" not in df.columns:
-            st.error("File must contain material_code and material_name")
-        else:
-            # Add missing columns
-            defaults = {
-                "category": "",
-                "stock_uom": "kg",
-                "issue_uom": "kg",
-                "issue_to_stock_factor": 1,
-                "std_wastage_pct": 0,
-                "is_critical": 0,
-                "active": 1,
-                "notes": "imported"
-            }
-
-            for col, default in defaults.items():
-                if col not in df.columns:
-                    df[col] = default
-
-            df["category"] = ""  # IMPORTANT: blank on import
-
-            st.write("Preview")
-            st.dataframe(df, use_container_width=True)
-
-            if st.button("Import into RM Master"):
-                st.session_state.rm_df = pd.concat(
-                    [st.session_state.rm_df, df],
-                    ignore_index=True
-                )
-                st.success("Imported successfully")
-                st.rerun()
-
-    except Exception as e:
-        st.error(str(e))
-
-# --------------------------------
-# SEARCH
-# --------------------------------
-st.subheader("Raw Materials Table")
-
-search = st.text_input("Search material name or code")
-
-view_df = st.session_state.rm_df.copy()
-
-if search:
-    view_df = view_df[
-        view_df["material_code"].str.contains(search, case=False, na=False) |
-        view_df["material_name"].str.contains(search, case=False, na=False)
-    ]
-
-# --------------------------------
-# EDITABLE TABLE (CATEGORY AFTER IMPORT)
-# --------------------------------
-edited_df = st.data_editor(
-    view_df,
-    use_container_width=True,
-    column_config={
-        "category": st.column_config.SelectboxColumn(
+    # -----------------------------
+    # INIT SESSION STATE
+    # -----------------------------
+    if "rm_df" not in st.session_state:
+        st.session_state.rm_df = pd.DataFrame(columns=[
+            "material_code",
+            "material_name",
             "category",
-            options=CATEGORY_OPTIONS
-        ),
-        "active": st.column_config.CheckboxColumn("active"),
-        "is_critical": st.column_config.CheckboxColumn("is_critical")
-    },
-    disabled=["material_code"],
-    key="rm_editor"
-)
+            "stock_uom",
+            "issue_uom",
+            "issue_to_stock_factor",
+            "std_wastage_pct",
+            "is_critical",
+            "active",
+            "notes",
+        ])
 
-# --------------------------------
-# SAVE CHANGES
-# --------------------------------
-if st.button("Save changes"):
-    st.session_state.rm_df.update(edited_df)
-    st.success("Changes saved")
+    CATEGORY_OPTIONS = ["Resin", "Pigment", "Solvent", "Additive", "Packaging"]
 
-# --------------------------------
-# DELETE
-# --------------------------------
-to_delete = st.multiselect(
-    "Delete materials",
-    options=st.session_state.rm_df["material_code"].tolist()
-)
+    st.title("RM Master (Raw Materials)")
 
-if st.button("Delete selected"):
-    st.session_state.rm_df = st.session_state.rm_df[
-        ~st.session_state.rm_df["material_code"].isin(to_delete)
-    ]
-    st.success("Deleted")
-    st.rerun()
-# ============================
+    # -----------------------------
+    # IMPORT CSV / XLSX
+    # -----------------------------
+    st.subheader("Import Raw Materials (CSV / XLSX)")
+    uploaded = st.file_uploader("Upload file", type=["csv", "xlsx"])
+
+    if uploaded is not None:
+        try:
+            if uploaded.name.lower().endswith(".csv"):
+                df = pd.read_csv(uploaded)
+            else:
+                df = pd.read_excel(uploaded)
+
+            # Normalize column names
+            df.columns = df.columns.str.strip().str.lower()
+
+            # Must have these
+            if "material_code" not in df.columns or "material_name" not in df.columns:
+                st.error("Your file must contain columns: material_code, material_name")
+            else:
+                # Add missing columns with defaults
+                defaults = {
+                    "category": "",
+                    "stock_uom": "kg",
+                    "issue_uom": "kg",
+                    "issue_to_stock_factor": 1.0,
+                    "std_wastage_pct": 0.0,
+                    "is_critical": 0,
+                    "active": 1,
+                    "notes": "imported",
+                }
+                for col, default in defaults.items():
+                    if col not in df.columns:
+                        df[col] = default
+
+                # Force category blank on import (you choose later)
+                df["category"] = ""
+
+                # Clean strings
+                df["material_code"] = df["material_code"].astype(str).str.strip()
+                df["material_name"] = df["material_name"].astype(str).str.strip()
+
+                st.write("Preview (category intentionally blank):")
+                st.dataframe(df, use_container_width=True)
+
+                if st.button("Import into RM Master", type="primary"):
+                    st.session_state.rm_df = pd.concat(
+                        [st.session_state.rm_df, df],
+                        ignore_index=True
+                    )
+
+                    # Drop duplicate codes, keep latest
+                    st.session_state.rm_df = (
+                        st.session_state.rm_df
+                        .sort_values(by=["material_code"])
+                        .drop_duplicates(subset=["material_code"], keep="last")
+                        .reset_index(drop=True)
+                    )
+
+                    st.success(f"Imported {len(df)} materials.")
+                    st.rerun()
+
+        except Exception as e:
+            st.error(f"Import failed: {e}")
+
+    st.divider()
+
+    # -----------------------------
+    # SEARCH
+    # -----------------------------
+    st.subheader("RM Master Table")
+    search = st.text_input("Search by code or name")
+
+    view_df = st.session_state.rm_df.copy()
+
+    if search:
+        view_df = view_df[
+            view_df["material_code"].astype(str).str.contains(search, case=False, na=False)
+            | view_df["material_name"].astype(str).str.contains(search, case=False, na=False)
+        ]
+
+    # -----------------------------
+    # EDIT TABLE (CATEGORY AFTER IMPORT)
+    # -----------------------------
+    edited_df = st.data_editor(
+        view_df,
+        use_container_width=True,
+        num_rows="fixed",
+        column_config={
+            "category": st.column_config.SelectboxColumn(
+                "Category",
+                options=CATEGORY_OPTIONS,
+            ),
+            "is_critical": st.column_config.CheckboxColumn("Critical"),
+            "active": st.column_config.CheckboxColumn("Active"),
+        },
+        disabled=["material_code"],
+        key="rm_editor"
+    )
+
+    col1, col2 = st.columns(2)
+
+    # -----------------------------
+    # SAVE CHANGES
+    # -----------------------------
+    with col1:
+        if st.button("Save changes"):
+            # Update original df by matching material_code
+            base = st.session_state.rm_df.set_index("material_code")
+            new = edited_df.set_index("material_code")
+            base.update(new)
+            st.session_state.rm_df = base.reset_index()
+            st.success("Saved.")
+
+    # -----------------------------
+    # DELETE
+    # -----------------------------
+    with col2:
+        to_delete = st.multiselect(
+            "Delete by MaterialCode",
+            options=st.session_state.rm_df["material_code"].tolist()
+        )
+        if st.button("DELETE selected"):
+            st.session_state.rm_df = st.session_state.rm_df[
+                ~st.session_state.rm_df["material_code"].isin(to_delete)
+            ].reset_index(drop=True)
+            st.success(f"Deleted {len(to_delete)} rows.")
+            st.rerun()# ============================
 # PRODUCTS
 # ============================
 elif page == "Products":
