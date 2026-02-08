@@ -284,28 +284,29 @@ if page == "Materials (RM Master)":
     # -----------------------------
     # SAVE CHANGES
     # -----------------------------
-with col1:
-    if st.button("Save changes"):
-        try:
-            for _, r in edited_df.iterrows():
-                logic.upsert_material({
-                    "material_code": r["material_code"],
-                    "material_name": r["material_name"],
-                    "category": r["category"],
-                    "stock_uom": r["stock_uom"],
-                    "issue_uom": r["issue_uom"],
-                    "issue_to_stock_factor": float(r["issue_to_stock_factor"]),
-                    "std_wastage_pct": float(r["std_wastage_pct"]),
-                    "is_critical": int(r["is_critical"]),
-                    "active": int(r["active"]),
-                    "notes": r.get("notes", "")
-                })
+    with col1:
+        if st.button("Save changes"):
+            try:
+                for _, r in edited_df.iterrows():
+                    logic.upsert_material({
+                        "material_code": r["material_code"],
+                        "material_name": r["material_name"],
+                        "category": r["category"],
+                        "stock_uom": r["stock_uom"],
+                        "issue_uom": r["issue_uom"],
+                        "issue_to_stock_factor": float(r["issue_to_stock_factor"]),
+                        "std_wastage_pct": float(r["std_wastage_pct"]),
+                        "is_critical": int(r["is_critical"]),
+                        "active": int(r["active"]),
+                        "notes": r.get("notes", "")
+                    })
 
-            st.success("Saved to database.")
-            st.experimental_rerun()
+                st.success("Saved to database.")
+                st.experimental_rerun()
 
-        except Exception as e:
-            st.error(f"Save failed: {e}")    # -----------------------------
+            except Exception as e:
+                st.error(f"Save failed: {e}")    
+    # -----------------------------
     # DELETE
     # -----------------------------
     with col2:
@@ -318,7 +319,8 @@ with col1:
                 ~st.session_state.rm_df["material_code"].isin(to_delete)
             ].reset_index(drop=True)
             st.success(f"Deleted {len(to_delete)} rows.")
-            st.rerun()# ============================
+            st.rerun()
+# ============================
 # PRODUCTS
 # ============================
 elif page == "Products":
