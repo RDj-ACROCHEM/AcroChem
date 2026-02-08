@@ -1057,3 +1057,29 @@ def integrity_check_stock() -> pd.DataFrame:
     df = get_stock_on_hand("")
     bad = df[df["qty_on_hand"] < -0.00001].copy()
     return bad
+
+
+def upsert_material(row: dict):
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO materials (
+                material_code, material_name, category,
+                stock_uom, issue_uom, issue_to_stock_factor,
+                std_wastage_pct, is_critical, active, notes
+            ) VALUES (
+                :material_code, :material_name, :category,
+                :stock_uom, :issue_uom, :issue_to_stock_factor,
+                :std_wastage_pct, :is_critical, :active, :notes
+            )
+            ON CONFLICT(material_code) DO UPDATE SET
+                material_name = excluded.material_name,
+                category = excluded.category,
+                stock_uom = excluded.stock_uom,
+                issue_uom = excluded.issue_uom,
+                issue_to_stock_factor = excluded.issue_to_stock_factor,
+                std_wastage_pct = excluded.std_wastage_pct,
+                is_critical = excluded.is_critical,
+                active = excluded.active,
+                notes = excluded.notes
+        """, row)
+        conn.commit()
