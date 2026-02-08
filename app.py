@@ -285,15 +285,28 @@ if page == "Materials (RM Master)":
     # SAVE CHANGES
     # -----------------------------
     with col1:
-        if st.button("Save changes"):
-            # Update original df by matching material_code
-            base = st.session_state.rm_df.set_index("material_code")
-            new = edited_df.set_index("material_code")
-            base.update(new)
-            st.session_state.rm_df = base.reset_index()
-            st.success("Saved.")
+if st.button("Save changes"):
+    try:
+        # Write edited rows back to DB
+        for _, r in edited_df.iterrows():
+            logic.upsert_material({
+                "material_code": r["material_code"],
+                "material_name": r["material_name"],
+                "category": r["category"],
+                "stock_uom": r["stock_uom"],
+                "issue_uom": r["issue_uom"],
+                "issue_to_stock_factor": float(r["issue_to_stock_factor"]),
+                "std_wastage_pct": float(r["std_wastage_pct"]),
+                "is_critical": int(r["is_critical"]),
+                "active": int(r["active"]),
+                "notes": r.get("notes", "")
+            })
 
-    # -----------------------------
+        st.success("Saved to database.")
+        st.experimental_rerun()
+
+    except Exception as e:
+        st.error(f"Save failed: {e}")    # -----------------------------
     # DELETE
     # -----------------------------
     with col2:
