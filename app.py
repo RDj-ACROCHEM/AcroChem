@@ -794,10 +794,10 @@ elif page == "Exports":
     csv2 = df_led.to_csv(index=False).encode("utf-8")
     st.download_button("Download ledger.csv", data=csv2, file_name="ledger.csv", mime="text/csv")
 
+
 # =========================================================
 # 10) Thinners sales
 # =========================================================
-
 elif page == "Thinners Sales":
     import pandas as pd
     import streamlit as st
@@ -812,8 +812,10 @@ elif page == "Thinners Sales":
     # ----------------------------
     st.subheader("A) Thinner Recipe (like Formulas / BOM)")
 
-    # Let user type a thinner name/code (simple + flexible)
-    thinner_code = st.text_input("Thinner name / code (e.g. DTM Blend, QD Blend)", value="").strip()
+    thinner_code = st.text_input(
+        "Thinner name / code (e.g. DTM Blend, QD Blend)",
+        value=""
+    ).strip()
 
     materials_df = logic.get_materials_lookup(active_only=True)
 
@@ -832,9 +834,9 @@ elif page == "Thinners Sales":
                 for _, r in existing.iterrows():
                     st.session_state.thin_lines.append({
                         "material_code": r["material_code"],
-                        "material_name": r["material_name"],
+                        "material_name": r.get("material_name", ""),
                         "qty_issue": float(r["qty_issue"]),
-                        "uom": r["uom"]
+                        "uom": r.get("uom", "L")
                     })
                 st.success("Loaded.")
 
@@ -843,27 +845,47 @@ elif page == "Thinners Sales":
             st.session_state.thin_lines = []
 
     st.markdown("### Add material to recipe")
+
+    if materials_df is None or materials_df.empty:
+        st.warning("No raw materials found. Import materials first.")
+        st.stop()
+
+    # Build label list safely (no NaN showing)
+    materials_df = materials_df.copy()
+    materials_df["material_code"] = materials_df["material_code"].astype(str)
+    materials_df["material_name"] = materials_df["material_name"].fillna("").astype(str)
+    materials_df["label"] = materials_df["material_code"] + " — " + materials_df["material_name"]
+
     col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
 
-    # Dropdown label that never shows nan
-    materials_df["label"] = materials_df.apply(
-        lambda r: f"{r['material_code']} — {r['material_name']}",
-        axis=1
-    )
+    with col1:
+        pick_label = st.selectbox(
+            "Raw material",
+            materials_df["label"].tolist()
+        )
 
- 
+        # Convert label -> code
+        pick_code = pick_label.split(" — ", 1)[0].strip()
 
-# SAFE lookup (NO CRASH)
-filtered = materials_df[materials_df["material_code"] == pick_label]
+        # Safe lookup
+        filtered = materials_df[materials_df["material_code"] == pick_code]
+        if filtered.empty:
+            st.warning("Please select a raw material")
+            st.stop()
+        pick_row = filtered.iloc[0]
+        pick_name = str(pick_row["material_name"])
 
-if filtered.empty:
-    st.warning("Please select a raw material")
-    st.stop()
+    with col2:
+        qty_issue = st.number_input(
+            "Qty per 1 unit (issue)",
+            min_value=0.0,
+            value=0.0,
+            step=0.01
+        )
 
-pick_row = filtered.iloc[0]    with col2:
-        qty_issue = st.number_input("Qty per 1 unit (issue)", min_value=0.0, value=0.0, step=0.01)
     with col3:
-        uom = st.selectbox("UOM", ["L", "kg", "g", "ml"])
+        uom = st.selectbox("UOM", ["L", "kg", "g", "ml"], index=0)
+
     with col4:
         if st.button("Add line"):
             if not thinner_code:
@@ -877,8 +899,10 @@ pick_row = filtered.iloc[0]    with col2:
                     if ln["material_code"] == pick_code:
                         ln["qty_issue"] = float(qty_issue)
                         ln["uom"] = uom
+                        ln["material_name"] = pick_name
                         found = True
                         break
+
                 if not found:
                     st.session_state.thin_lines.append({
                         "material_code": pick_code,
@@ -898,12 +922,17 @@ pick_row = filtered.iloc[0]    with col2:
             recipe_view["material_code"].tolist()
         )
         if st.button("Delete selected line"):
-            st.session_state.thin_lines = [ln for ln in st.session_state.thin_lines if ln["material_code"] != del_pick]
+            st.session_state.thin_lines = [
+                ln for ln in st.session_state.thin_lines
+                if ln["material_code"] != del_pick
+            ]
             st.success("Deleted.")
 
         if st.button("Save recipe"):
-            lines = [{"material_code": ln["material_code"], "qty_issue": ln["qty_issue"], "uom": ln["uom"]}
-                     for ln in st.session_state.thin_lines]
+            lines = [
+                {"material_code": ln["material_code"], "qty_issue": ln["qty_issue"], "uom": ln["uom"]}
+                for ln in st.session_state.thin_lines
+            ]
             logic.upsert_thinner_recipe(thinner_code, lines)
             st.success("Recipe saved.")
     else:
@@ -916,7 +945,6 @@ pick_row = filtered.iloc[0]    with col2:
     # ----------------------------
     st.subheader("B) Record Thinner Sale (auto-deduct raw materials from stock)")
 
-    # Show list of thinners that have recipes
     thinners = pd.read_sql("""
         SELECT DISTINCT thinner_code
         FROM thinner_recipes
@@ -956,72 +984,3 @@ pick_row = filtered.iloc[0]    with col2:
 
     st.markdown("### Recent thinner sales")
     st.dataframe(logic.get_thinner_sales_df(limit=200), use_container_width=True)
-
-elif page == "stock_on_hand":
-    import streamlit as st
-    import pandas as pd
-    import logic
-
-    st.title("Stock On Hand")
-
-    # Search
-    search = st.text_input("Search (code or name)", "")
-
-    # Pull current stock on hand (ONLY items with non-zero balance)
-    try:
-        df = logic.get_stock_on_hand(search=search)
-    except Exception as e:
-        st.error(f"Stock On Hand failed: {e}")
-        st.stop()
-
-    st.dataframe(df, use_container_width=True)
-
-    st.divider()
-
-    # Integrity check (negative stock)
-    with st.expander("Integrity check (negative stock)"):
-        bad = logic.integrity_check_stock()
-        if bad.empty:
-            st.success("No negative stock found ✅")
-        else:
-            st.error("Negative stock found (this must be fixed) ❌")
-            st.dataframe(bad, use_container_width=True)
-
-    st.divider()
-
-    st.subheader("Manual Add / Subtract (writes to ledger)")
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        item_type = st.selectbox("Item type", ["RM", "FG"])
-    with col2:
-        code = st.text_input("Code (exact)", "")
-    with col3:
-        qty_delta = st.number_input("Qty change (+ add, - subtract)", value=0.0, step=1.0, format="%.4f")
-
-    col4, col5 = st.columns(2)
-    with col4:
-        cost_per_uom = st.number_input("Cost per UOM (optional)", value=0.0, step=0.01, format="%.6f")
-    with col5:
-        notes = st.text_input("Notes (optional)", "")
-
-    if st.button("Post adjustment"):
-        if not code.strip():
-            st.warning("Enter a code first.")
-        elif abs(qty_delta) < 0.0000001:
-            st.warning("Qty change cannot be zero.")
-        else:
-            try:
-                logic.post_stock_adjustment(
-                    item_type=item_type,
-                    code=code.strip(),
-                    qty_delta=float(qty_delta),
-                    cost_per_uom=float(cost_per_uom),
-                    notes=notes.strip(),
-                    ref_type="MANUAL",
-                    ref_id=""
-                )
-                st.success("Posted to ledger ✅")
-                st.experimental_rerun()
-            except Exception as e:
-                st.error(f"Failed to post adjustment: {e}")
