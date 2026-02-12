@@ -1160,7 +1160,10 @@ def _get_issue_to_stock_factor(material_code: str) -> float:
 def get_products_lookup(active_only=True):
     conn = get_conn()
     query = "SELECT product_code, product_name FROM products"
-    return pd.read_sql_query(query, conn)def record_paint_sale_and_deduct_stock(
+    return pd.read_sql_query(query, conn)
+    
+    
+    def record_paint_sale_and_deduct_stock(
     sale_date,
     product_code: str,
     qty_sold: float,
