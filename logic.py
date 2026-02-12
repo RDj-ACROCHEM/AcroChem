@@ -1157,15 +1157,20 @@ def _get_issue_to_stock_factor(material_code: str) -> float:
         return 1.0
     return _safe_float(row[0], 1.0) or 1.0
 
-def get_products_lookup(active_only: bool = True) -> pd.DataFrame:
-    q = "SELECT product_code, product_name, base_batch_size_l, active FROM products"
+def get_products_lookup(active_only=True):
+    conn = get_conn()
+    
+    query = """
+        SELECT product_code, product_name
+        FROM products
+    """
+    
     if active_only:
-        q += " WHERE active=1"
-    q += " ORDER BY product_name"
-    with get_conn() as conn:
-        return pd.read_sql_query(q, conn)
-
-def get_formula_lines_for_product(product_code: str, version: str = "V1") -> pd.DataFrame:
+        query += " WHERE active = 1"
+    
+    query += " ORDER BY product_name"
+    
+    return pd.read_sql_query(query, conn)def get_formula_lines_for_product(product_code: str, version: str = "V1") -> pd.DataFrame:
     """
     Returns formula lines:
     material_code, qty_per_base_batch, line_uom, notes
