@@ -107,6 +107,7 @@ with st.sidebar:
             "Ledger (All Movements)",
             "Exports",
             "Thinners Sales",
+            "Paint Sales",       
         ],
     )
 
@@ -998,3 +999,70 @@ elif page == "Thinners Sales":
 
     st.markdown("### Recent thinner sales")
     st.dataframe(logic.get_thinner_sales_df(limit=200), use_container_width=True)
+
+# ---------------- Paint Sales ----------------
+elif page == "Paint Sales":
+    import pandas as pd
+    st.subheader("Paint Sales (auto-deduct BASE + RM)")
+
+    # Make sure schema exists
+    logic.ensure_paint_sales_schema()
+
+    # Pick a product to sell
+    products = logic.get_products_lookup(active_only=True)
+    if products.empty:
+        st.warning("No products found. Add products first.")
+        st.stop()
+
+    prod = st.selectbox(
+        "Paint sold (product)",
+        products["product_code"].tolist(),
+        format_func=lambda x: f"{x} — {products.set_index('product_code').loc[x,'product_name']}"
+    )
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        sale_date = st.date_input("Sale date")
+    with col2:
+        qty_sold = st.number_input("Qty sold (L)", min_value=0.0, value=0.0, step=1.0)
+    with col3:
+        version = st.text_input("Formula version", value="V1")
+
+    notes = st.text_input("Notes (optional)", value="")
+
+    # Preview consumption BEFORE saving
+    if qty_sold > 0:
+        try:
+            # show formula scaled
+            lines = logic.get_formula_lines_for_product(prod, version.strip())
+            if lines.empty:
+                st.warning("No formula lines for this product/version.")
+            else:
+                # factor based on product base size
+                base_size = float(products.set_index("product_code").loc[prod, "base_batch_size_l"])
+                factor = float(qty_sold) / base_size if base_size else 1.0
+
+                preview = lines.copy()
+                preview["qty_for_this_sale"] = preview["qty_per_base_batch"].astype(float) * factor
+                st.caption("Preview: components that will be deducted for this sale")
+                st.dataframe(preview[["material_code","line_uom","qty_for_this_sale","notes"]], use_container_width=True)
+        except Exception as e:
+            st.warning(f"Preview failed: {e}")
+
+    if st.button("Save sale + deduct stock", type="primary"):
+        try:
+            sale_id = logic.record_paint_sale_and_deduct_stock(
+                sale_date=sale_date,
+                product_code=prod,
+                qty_sold=qty_sold,
+                uom="L",
+                version=version.strip(),
+                notes=notes.strip()
+            )
+            st.success(f"Saved sale (ID {sale_id}) and deducted base/RM from stock.")
+        except Exception as e:
+            st.error(str(e))
+
+    st.divider()
+    st.subheader("Recent Paint Sales")
+    st.dataframe(logic.get_paint_sales_df(limit=200), use_container_width=True)
