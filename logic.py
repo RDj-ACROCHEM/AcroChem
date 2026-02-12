@@ -1159,19 +1159,7 @@ def _get_issue_to_stock_factor(material_code: str) -> float:
 
 def get_products_lookup(active_only=True):
     conn = get_conn()
-
-    query = """
-        SELECT product_code, product_name
-        FROM products
-    """
-
-    if active_only:
-        query += " WHERE active = 1"
-
-    query += " ORDER BY product_name"
-
-    return pd.read_sql_query(query, conn)    
-
+    return pd.read_sql_query("SELECT product_code, product_name FROM products", conn)
     
     return pd.read_sql_query(query, conn)def get_formula_lines_for_product(product_code: str, version: str = "V1") -> pd.DataFrame:
     """
