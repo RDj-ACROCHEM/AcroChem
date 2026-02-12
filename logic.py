@@ -1083,3 +1083,199 @@ def upsert_material(row: dict):
                 notes = excluded.notes
         """, row)
         conn.commit()
+
+
+# =========================================================
+# PAINT SALES (consume base + RM using existing Formulas/BOM)
+# =========================================================
+
+import pandas as pd
+from datetime import datetime
+
+def ensure_paint_sales_schema():
+    """Creates paint_sales table if missing (safe to call anytime)."""
+    with get_conn() as conn:
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS paint_sales (
+            sale_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sale_date TEXT NOT NULL,
+            product_code TEXT NOT NULL,
+            qty_sold REAL NOT NULL,
+            uom TEXT NOT NULL DEFAULT 'L',
+            notes TEXT DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """)
+        conn.commit()
+
+def get_paint_sales_df(limit: int = 200) -> pd.DataFrame:
+    ensure_paint_sales_schema()
+    with get_conn() as conn:
+        return pd.read_sql_query(
+            "SELECT * FROM paint_sales ORDER BY sale_date DESC, sale_id DESC LIMIT ?",
+            conn,
+            params=(limit,)
+        )
+
+def _safe_float(x, default=0.0) -> float:
+    try:
+        if x is None:
+            return default
+        return float(x)
+    except:
+        return default
+
+def _code_type(code: str) -> str:
+    """
+    Decide if code is RM (materials table) or FG/Intermediate (products table).
+    Returns: 'RM' or 'FG'
+    """
+    code = (code or "").strip()
+    if not code:
+        return "RM"
+
+    with get_conn() as conn:
+        m = conn.execute("SELECT 1 FROM materials WHERE material_code=? LIMIT 1", (code,)).fetchone()
+        if m:
+            return "RM"
+        p = conn.execute("SELECT 1 FROM products WHERE product_code=? LIMIT 1", (code,)).fetchone()
+        if p:
+            return "FG"
+
+    # default: treat as RM (safer than FG)
+    return "RM"
+
+def _get_issue_to_stock_factor(material_code: str) -> float:
+    with get_conn() as conn:
+        row = conn.execute("""
+            SELECT issue_to_stock_factor
+            FROM materials
+            WHERE material_code=?
+            LIMIT 1
+        """, (material_code,)).fetchone()
+    if not row:
+        return 1.0
+    return _safe_float(row[0], 1.0) or 1.0
+
+def get_products_lookup(active_only: bool = True) -> pd.DataFrame:
+    q = "SELECT product_code, product_name, base_batch_size_l, active FROM products"
+    if active_only:
+        q += " WHERE active=1"
+    q += " ORDER BY product_name"
+    with get_conn() as conn:
+        return pd.read_sql_query(q, conn)
+
+def get_formula_lines_for_product(product_code: str, version: str = "V1") -> pd.DataFrame:
+    """
+    Returns formula lines:
+    material_code, qty_per_base_batch, line_uom, notes
+    """
+    with get_conn() as conn:
+        df = pd.read_sql_query("""
+            SELECT material_code, qty_per_base_batch, line_uom, notes
+            FROM formulas
+            WHERE product_code=? AND version=?
+            ORDER BY line_no
+        """, conn, params=(product_code, version))
+    return df
+
+def record_paint_sale_and_deduct_stock(
+    sale_date,
+    product_code: str,
+    qty_sold: float,
+    uom: str = "L",
+    version: str = "V1",
+    notes: str = ""
+):
+    """
+    1) Saves a paint sale record
+    2) Deducts ALL components in the paint formula:
+       - If a component code exists in Products => treated as FG/intermediate (e.g. QD_CLEAR) and deducted
+       - If it exists in Materials => treated as RM and deducted
+    Uses post_stock_adjustment so Stock On Hand updates automatically.
+    """
+
+    ensure_paint_sales_schema()
+
+    product_code = (product_code or "").strip()
+    version = (version or "V1").strip()
+    notes = (notes or "").strip()
+
+    qty_sold = _safe_float(qty_sold, 0.0)
+    if not product_code:
+        raise ValueError("Product is required.")
+    if qty_sold <= 0:
+        raise ValueError("Qty sold must be > 0.")
+
+    # Normalize sale_date to ISO string
+    if hasattr(sale_date, "isoformat"):
+        sale_date_str = sale_date.isoformat()
+    else:
+        sale_date_str = str(sale_date)
+
+    # Pull formula
+    lines = get_formula_lines_for_product(product_code, version)
+    if lines.empty:
+        raise ValueError(f"No formula lines found for {product_code} ({version}).")
+
+    # Save sale header
+    with get_conn() as conn:
+        cur = conn.execute("""
+            INSERT INTO paint_sales (sale_date, product_code, qty_sold, uom, notes)
+            VALUES (?, ?, ?, ?, ?)
+        """, (sale_date_str, product_code, qty_sold, uom, notes))
+        sale_id = cur.lastrowid
+        conn.commit()
+
+    # Deduct components
+    # IMPORTANT: formula is defined per 1 "base batch" of the PRODUCT (base_batch_size_l)
+    with get_conn() as conn:
+        base_row = conn.execute("""
+            SELECT base_batch_size_l
+            FROM products
+            WHERE product_code=?
+            LIMIT 1
+        """, (product_code,)).fetchone()
+
+    base_batch_size_l = _safe_float(base_row[0], 200.0) if base_row else 200.0
+    if base_batch_size_l <= 0:
+        base_batch_size_l = 200.0
+
+    factor = qty_sold / base_batch_size_l  # e.g. 100L sold / 200L base = 0.5
+
+    # Loop each formula component and post deduction
+    for _, r in lines.iterrows():
+        comp_code = str(r.get("material_code", "")).strip()
+        if not comp_code:
+            continue
+
+        qty_per_base = _safe_float(r.get("qty_per_base_batch", 0.0), 0.0)
+        if qty_per_base == 0:
+            continue
+
+        comp_qty_issue = qty_per_base * factor
+        comp_uom = str(r.get("line_uom", "") or "").strip()
+
+        # Determine RM vs FG (intermediate)
+        item_type = _code_type(comp_code)  # 'RM' or 'FG'
+
+        # Convert issue qty to stock qty if RM and factor is configured
+        qty_to_post = comp_qty_issue
+        if item_type == "RM":
+            # If your formulas are already in STOCK UoM then keep factor=1 in RM master.
+            # If your formulas are in issue UoM, set IssueToStockFactor correctly.
+            issue_to_stock = _get_issue_to_stock_factor(comp_code)
+            qty_to_post = comp_qty_issue * issue_to_stock
+
+        # Deduct from ledger
+        post_stock_adjustment(
+            item_type=item_type,
+            code=comp_code,
+            qty_delta=-abs(float(qty_to_post)),
+            cost_per_uom=0.0,
+            notes=f"PAINT_SALE {product_code} ({sale_id})",
+            ref_type="PAINT_SALE",
+            ref_id=str(sale_id)
+        )
+
+    return sale_id
