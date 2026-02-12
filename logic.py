@@ -1163,7 +1163,7 @@ def get_products_lookup(active_only=True):
     return pd.read_sql_query(query, conn)
     
     
-    def record_paint_sale_and_deduct_stock(
+def record_paint_sale_and_deduct_stock(
     sale_date,
     product_code: str,
     qty_sold: float,
