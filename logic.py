@@ -1159,23 +1159,8 @@ def _get_issue_to_stock_factor(material_code: str) -> float:
 
 def get_products_lookup(active_only=True):
     conn = get_conn()
-    return pd.read_sql_query("SELECT product_code, product_name FROM products", conn)
-    
-    return pd.read_sql_query(query, conn)def get_formula_lines_for_product(product_code: str, version: str = "V1") -> pd.DataFrame:
-    """
-    Returns formula lines:
-    material_code, qty_per_base_batch, line_uom, notes
-    """
-    with get_conn() as conn:
-        df = pd.read_sql_query("""
-            SELECT material_code, qty_per_base_batch, line_uom, notes
-            FROM formulas
-            WHERE product_code=? AND version=?
-            ORDER BY line_no
-        """, conn, params=(product_code, version))
-    return df
-
-def record_paint_sale_and_deduct_stock(
+    query = "SELECT product_code, product_name FROM products"
+    return pd.read_sql_query(query, conn)def record_paint_sale_and_deduct_stock(
     sale_date,
     product_code: str,
     qty_sold: float,
